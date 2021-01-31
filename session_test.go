@@ -50,6 +50,7 @@ var _ = Describe("Session", func() {
 		mconn         *MockSendConn
 		streamManager *MockStreamManager
 		packer        *MockPacker
+		mtuDiscoverer *MockMtuDiscoverer
 		cryptoSetup   *mocks.MockCryptoSetup
 		tracer        *mocklogging.MockConnectionTracer
 	)
@@ -78,6 +79,13 @@ var _ = Describe("Session", func() {
 			s.shutdown()
 			Eventually(areClosedSessionsRunning).Should(BeFalse())
 		})
+	}
+
+	setHandshakeConfirmed := func() {
+		Expect(sess.handshakeComplete).To(BeTrue())
+		sess.handshakeConfirmed = true
+		mtuDiscoverer = NewMockMtuDiscoverer(mockCtrl)
+		sess.mtuDiscoverer = mtuDiscoverer
 	}
 
 	BeforeEach(func() {
@@ -118,6 +126,7 @@ var _ = Describe("Session", func() {
 		sess.cryptoStreamHandler = cryptoSetup
 		sess.handshakeComplete = true
 		sess.idleTimeout = time.Hour
+		sess.peerParams = &wire.TransportParameters{}
 	})
 
 	AfterEach(func() {
@@ -435,7 +444,6 @@ var _ = Describe("Session", func() {
 		}
 
 		It("shuts down without error", func() {
-			sess.handshakeComplete = true
 			runSession()
 			streamManager.EXPECT().CloseWithError(qerr.NewApplicationError(0, ""))
 			expectReplaceWithClosed()
@@ -576,7 +584,7 @@ var _ = Describe("Session", func() {
 
 		It("doesn't send any more packets after receiving a CONNECTION_CLOSE", func() {
 			unpacker := NewMockUnpacker(mockCtrl)
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
 			sess.unpacker = unpacker
 			runSession()
 			cryptoSetup.EXPECT().Close()
@@ -615,7 +623,8 @@ var _ = Describe("Session", func() {
 		})
 
 		It("closes when the sendQueue encounters an error", func() {
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
+			sess.mtuDiscoverer = newMTUDiscoverer(sess.rttStats, 1000, 1000, nil)
 			conn := NewMockSendConn(mockCtrl)
 			conn.EXPECT().Write(gomock.Any()).Return(io.ErrClosedPipe).AnyTimes()
 			sess.sendQueue = newSendQueue(conn)
@@ -1217,6 +1226,7 @@ var _ = Describe("Session", func() {
 			sender.EXPECT().Run()
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sess.sendQueue = sender
+			sess.mtuDiscoverer = newMTUDiscoverer(sess.rttStats, 1000, 1000, nil)
 			sessionDone = make(chan struct{})
 		})
 
@@ -1244,7 +1254,7 @@ var _ = Describe("Session", func() {
 		}
 
 		It("sends packets", func() {
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
 			sph := mockackhandler.NewMockSentPacketHandler(mockCtrl)
 			sph.EXPECT().TimeUntilSend().AnyTimes()
 			sph.EXPECT().GetLossDetectionTimeout().AnyTimes()
@@ -1260,12 +1270,13 @@ var _ = Describe("Session", func() {
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sender.EXPECT().Send(gomock.Any()).Do(func(packet *packetBuffer) { close(sent) })
 			tracer.EXPECT().SentPacket(p.header, p.buffer.Len(), nil, []logging.Frame{})
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			sess.scheduleSending()
 			Eventually(sent).Should(BeClosed())
 		})
 
 		It("doesn't send packets if there's nothing to send", func() {
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
 			runSession()
 			packer.EXPECT().PackPacket().Return(nil, nil).AnyTimes()
 			sess.receivedPacketHandler.ReceivedPacket(0x035e, protocol.ECNNon, protocol.Encryption1RTT, time.Now(), true)
@@ -1287,7 +1298,7 @@ var _ = Describe("Session", func() {
 		})
 
 		It("adds a BLOCKED frame when it is connection-level flow control blocked", func() {
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
 			sph := mockackhandler.NewMockSentPacketHandler(mockCtrl)
 			sph.EXPECT().TimeUntilSend().AnyTimes()
 			sph.EXPECT().GetLossDetectionTimeout().AnyTimes()
@@ -1306,6 +1317,7 @@ var _ = Describe("Session", func() {
 			sent := make(chan struct{})
 			sender.EXPECT().Send(gomock.Any()).Do(func(packet *packetBuffer) { close(sent) })
 			tracer.EXPECT().SentPacket(p.header, p.length, nil, []logging.Frame{})
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			sess.scheduleSending()
 			Eventually(sent).Should(BeClosed())
 			frames, _ := sess.framer.AppendControlFrames(nil, 1000)
@@ -1403,8 +1415,7 @@ var _ = Describe("Session", func() {
 			tracer.EXPECT().SentPacket(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 			sph = mockackhandler.NewMockSentPacketHandler(mockCtrl)
 			sph.EXPECT().GetLossDetectionTimeout().AnyTimes()
-			sess.handshakeConfirmed = true
-			sess.handshakeComplete = true
+			setHandshakeConfirmed()
 			sess.sentPacketHandler = sph
 			sender = NewMockSender(mockCtrl)
 			sender.EXPECT().Run()
@@ -1435,6 +1446,7 @@ var _ = Describe("Session", func() {
 			packer.EXPECT().PackPacket().Return(getPacket(11), nil)
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sender.EXPECT().Send(gomock.Any()).Times(2)
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			go func() {
 				defer GinkgoRecover()
 				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
@@ -1452,6 +1464,7 @@ var _ = Describe("Session", func() {
 			packer.EXPECT().PackPacket().Return(nil, nil)
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sender.EXPECT().Send(gomock.Any())
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			go func() {
 				defer GinkgoRecover()
 				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
@@ -1486,6 +1499,7 @@ var _ = Describe("Session", func() {
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny)
 			sph.EXPECT().SendMode().Return(ackhandler.SendAck)
 			packer.EXPECT().PackPacket().Return(getPacket(100), nil)
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any())
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sender.EXPECT().Send(gomock.Any())
 			go func() {
@@ -1502,11 +1516,13 @@ var _ = Describe("Session", func() {
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny).AnyTimes()
 			gomock.InOrder(
 				sph.EXPECT().HasPacingBudget().Return(true),
+				mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()),
 				packer.EXPECT().PackPacket().Return(getPacket(100), nil),
 				sph.EXPECT().SentPacket(gomock.Any()),
 				sph.EXPECT().HasPacingBudget(),
 				sph.EXPECT().TimeUntilSend().Return(time.Now().Add(pacingDelay)),
 				sph.EXPECT().HasPacingBudget().Return(true),
+				mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()),
 				packer.EXPECT().PackPacket().Return(getPacket(101), nil),
 				sph.EXPECT().SentPacket(gomock.Any()),
 				sph.EXPECT().HasPacingBudget(),
@@ -1532,6 +1548,7 @@ var _ = Describe("Session", func() {
 			sph.EXPECT().HasPacingBudget()
 			sph.EXPECT().TimeUntilSend().Return(time.Now().Add(time.Hour))
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny).Times(4)
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			packer.EXPECT().PackPacket().Return(getPacket(1000), nil)
 			packer.EXPECT().PackPacket().Return(getPacket(1001), nil)
 			packer.EXPECT().PackPacket().Return(getPacket(1002), nil)
@@ -1551,6 +1568,7 @@ var _ = Describe("Session", func() {
 			available := make(chan struct{}, 1)
 			sender.EXPECT().WouldBlock().Return(true)
 			sender.EXPECT().Available().Return(available)
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			go func() {
 				defer GinkgoRecover()
 				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
@@ -1587,6 +1605,7 @@ var _ = Describe("Session", func() {
 			})
 			sph.EXPECT().HasPacingBudget().Return(true).AnyTimes()
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny).AnyTimes()
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			packer.EXPECT().PackPacket().Return(getPacket(1000), nil)
 			packer.EXPECT().PackPacket().Return(nil, nil)
 			sender.EXPECT().Send(gomock.Any()).DoAndReturn(func(p *packetBuffer) { close(written) })
@@ -1601,6 +1620,7 @@ var _ = Describe("Session", func() {
 			sph.EXPECT().SentPacket(gomock.Any())
 			sph.EXPECT().HasPacingBudget().Return(true).AnyTimes()
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny)
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			packer.EXPECT().PackPacket().Return(getPacket(1000), nil)
 			written := make(chan struct{}, 1)
 			sender.EXPECT().WouldBlock()
@@ -1637,6 +1657,7 @@ var _ = Describe("Session", func() {
 			sph.EXPECT().HasPacingBudget().Return(true)
 			sph.EXPECT().SendMode().Return(ackhandler.SendAny).AnyTimes()
 			sender.EXPECT().WouldBlock().AnyTimes()
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 			packer.EXPECT().PackPacket()
 			// don't EXPECT any calls to mconn.Write()
 			go func() {
@@ -1646,6 +1667,27 @@ var _ = Describe("Session", func() {
 			}()
 			sess.scheduleSending() // no packet will get sent
 			time.Sleep(50 * time.Millisecond)
+		})
+
+		It("sends a Path MTU probe packet", func() {
+			sph.EXPECT().SentPacket(gomock.Any())
+			sph.EXPECT().HasPacingBudget().Return(true).AnyTimes()
+			sph.EXPECT().SendMode().Return(ackhandler.SendAny)
+			sph.EXPECT().SendMode().Return(ackhandler.SendNone)
+			written := make(chan struct{}, 1)
+			sender.EXPECT().WouldBlock().AnyTimes()
+			sender.EXPECT().Send(gomock.Any()).DoAndReturn(func(p *packetBuffer) { written <- struct{}{} })
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).Return(true)
+			ping := ackhandler.Frame{Frame: &wire.PingFrame{}}
+			mtuDiscoverer.EXPECT().GetPing().Return(ping, protocol.ByteCount(1234))
+			packer.EXPECT().PackMTUProbePacket(ping, protocol.ByteCount(1234)).Return(getPacket(1), nil)
+			go func() {
+				defer GinkgoRecover()
+				cryptoSetup.EXPECT().RunHandshake().MaxTimes(1)
+				sess.run()
+			}()
+			sess.scheduleSending()
+			Eventually(written).Should(Receive())
 		})
 	})
 
@@ -1657,7 +1699,8 @@ var _ = Describe("Session", func() {
 			sender.EXPECT().WouldBlock().AnyTimes()
 			sender.EXPECT().Run()
 			sess.sendQueue = sender
-			sess.handshakeConfirmed = true
+			setHandshakeConfirmed()
+			mtuDiscoverer.EXPECT().ShouldSendProbe(gomock.Any()).AnyTimes()
 		})
 
 		AfterEach(func() {
@@ -1812,6 +1855,7 @@ var _ = Describe("Session", func() {
 	})
 
 	It("cancels the HandshakeComplete context when the handshake completes", func() {
+		sess.peerParams = &wire.TransportParameters{}
 		packer.EXPECT().PackCoalescedPacket().AnyTimes()
 		finishHandshake := make(chan struct{})
 		sph := mockackhandler.NewMockSentPacketHandler(mockCtrl)
@@ -1847,6 +1891,7 @@ var _ = Describe("Session", func() {
 	})
 
 	It("sends a session ticket when the handshake completes", func() {
+		sess.peerParams = &wire.TransportParameters{}
 		const size = protocol.MaxPostHandshakeCryptoFrameSize * 3 / 2
 		packer.EXPECT().PackCoalescedPacket().AnyTimes()
 		finishHandshake := make(chan struct{})
@@ -1913,6 +1958,8 @@ var _ = Describe("Session", func() {
 	})
 
 	It("sends a HANDSHAKE_DONE frame when the handshake completes", func() {
+		sess.rttStats = &utils.RTTStats{}
+		sess.rttStats.UpdateRTT(time.Second, 0, time.Now())
 		sph := mockackhandler.NewMockSentPacketHandler(mockCtrl)
 		sph.EXPECT().SendMode().Return(ackhandler.SendAny).AnyTimes()
 		sph.EXPECT().GetLossDetectionTimeout().AnyTimes()

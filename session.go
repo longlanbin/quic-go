@@ -155,9 +155,10 @@ type session struct {
 	tokenStoreKey         string                    // only set for the client
 	tokenGenerator        *handshake.TokenGenerator // only set for the server
 
-	unpacker    unpacker
-	frameParser wire.FrameParser
-	packer      packer
+	unpacker      unpacker
+	frameParser   wire.FrameParser
+	packer        packer
+	mtuDiscoverer mtuDiscoverer // initialized when the handshake completes
 
 	oneRTTStream        cryptoStream // only set for the server
 	cryptoStreamHandler cryptoStreamHandler
@@ -758,6 +759,21 @@ func (s *session) handleHandshakeComplete() {
 
 	s.connIDManager.SetHandshakeComplete()
 	s.connIDGenerator.SetHandshakeComplete()
+
+	maxPacketSize := s.peerParams.MaxUDPPayloadSize
+	if maxPacketSize == 0 {
+		maxPacketSize = protocol.MaxByteCount
+	}
+	maxPacketSize = utils.MinByteCount(maxPacketSize, protocol.MaxPacketBufferSize)
+	s.mtuDiscoverer = newMTUDiscoverer(
+		s.rttStats,
+		getMaxPacketSize(s.conn.RemoteAddr()),
+		maxPacketSize,
+		func(size protocol.ByteCount) {
+			s.sentPacketHandler.SetMaxDatagramSize(size)
+			s.packer.SetMaxPacketSize(size)
+		},
+	)
 
 	if s.perspective == protocol.PerspectiveServer {
 		s.handshakeConfirmed = true
@@ -1582,7 +1598,7 @@ func (s *session) maybeSendAckOnlyPacket() error {
 	if packet == nil {
 		return nil
 	}
-	s.sendPackedPacket(packet)
+	s.sendPackedPacket(packet, time.Now())
 	return nil
 }
 
@@ -1624,7 +1640,7 @@ func (s *session) sendProbePacket(encLevel protocol.EncryptionLevel) error {
 	if packet == nil || packet.packetContents == nil {
 		return fmt.Errorf("session BUG: couldn't pack %s probe packet", encLevel)
 	}
-	s.sendPackedPacket(packet)
+	s.sendPackedPacket(packet, time.Now())
 	return nil
 }
 
@@ -1634,8 +1650,8 @@ func (s *session) sendPacket() (bool, error) {
 	}
 	s.windowUpdateQueue.QueueAll()
 
+	now := time.Now()
 	if !s.handshakeConfirmed {
-		now := time.Now()
 		packet, err := s.packer.PackCoalescedPacket()
 		if err != nil || packet == nil {
 			return false, err
@@ -1651,16 +1667,23 @@ func (s *session) sendPacket() (bool, error) {
 		s.sendQueue.Send(packet.buffer)
 		return true, nil
 	}
+	if s.handshakeComplete && s.mtuDiscoverer.ShouldSendProbe(now) {
+		packet, err := s.packer.PackMTUProbePacket(s.mtuDiscoverer.GetPing())
+		if err != nil {
+			return false, err
+		}
+		s.sendPackedPacket(packet, now)
+		return true, nil
+	}
 	packet, err := s.packer.PackPacket()
 	if err != nil || packet == nil {
 		return false, err
 	}
-	s.sendPackedPacket(packet)
+	s.sendPackedPacket(packet, now)
 	return true, nil
 }
 
-func (s *session) sendPackedPacket(packet *packedPacket) {
-	now := time.Now()
+func (s *session) sendPackedPacket(packet *packedPacket, now time.Time) {
 	if s.firstAckElicitingPacketAfterIdleSentTime.IsZero() && packet.IsAckEliciting() {
 		s.firstAckElicitingPacketAfterIdleSentTime = now
 	}
