@@ -21,6 +21,28 @@ import (
 	"github.com/lucas-clemente/quic-go/qlog"
 )
 
+func sendData(hclient *http.Client, addr string) {
+	logger := utils.DefaultLogger
+	logger.Infof("==========GET %s", addr)
+	go func(addr string) {
+		rsp, err := hclient.Get(addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		logger.Infof("Got response for %s: %#v", addr, rsp)
+
+		body := &bytes.Buffer{}
+		_, err = io.Copy(body, rsp.Body)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		logger.Infof("Request Body:")
+		logger.Infof("%s", body.Bytes())
+
+	}(addr)
+}
+
 func main() {
 	verbose := flag.Bool("v", false, "verbose")
 	quiet := flag.Bool("q", false, "don't print the data")
@@ -102,8 +124,35 @@ func main() {
 				logger.Infof("Request Body:")
 				logger.Infof("%s", body.Bytes())
 			}
+
 			wg.Done()
 		}(addr)
 	}
 	wg.Wait()
+
+	var (
+		input string
+		cmd   string
+		param string
+	)
+
+	f := bufio.NewReader(os.Stdin) //读取输入的内容
+	for {
+		fmt.Print("请输入一些字符串>")
+		input, _ = f.ReadString('\n') //定义一行输入的内容分隔符。
+		if len(input) == 1 {
+			continue //如果用户输入的是一个空行就让用户继续输入。
+		}
+		fmt.Printf("您输入的是:%s", input)
+		fmt.Sscan(input, &cmd, &param) //将Input
+		switch cmd {
+		case "ss":
+			sendData(hclient, "https://172.20.114.49:6111/demo/tile")
+		case "stop":
+			break
+		default:
+			fmt.Printf("未知命令：%s\n", cmd)
+		}
+		fmt.Printf("您输入的第一个参数是 %s, 输入的第二个参数是 %s\n", cmd, param)
+	}
 }
