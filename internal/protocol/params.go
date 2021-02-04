@@ -2,6 +2,9 @@ package protocol
 
 import "time"
 
+// DesiredReceiveBufferSize is the kernel UDP receive buffer size that we'd like to use.
+const DesiredReceiveBufferSize = (1 << 20) * 2 // 2 MB
+
 // MaxPacketSizeIPv4 is the maximum packet size that we use for sending IPv4 packets.
 const MaxPacketSizeIPv4 = 1252
 
@@ -12,7 +15,7 @@ const MaxPacketSizeIPv6 = 1232
 const MaxCongestionWindowPackets = 10000
 
 // MaxUndecryptablePackets limits the number of undecryptable packets that are queued in the session.
-const MaxUndecryptablePackets = 33
+const MaxUndecryptablePackets = 32
 
 // ConnectionFlowControlMultiplier determines how much larger the connection flow control windows needs to be relative to any stream's flow control window
 // This is the value that Chromium is using
@@ -45,8 +48,12 @@ const MaxServerUnprocessedPackets = 1024
 // MaxSessionUnprocessedPackets is the max number of packets stored in each session that are not yet processed.
 const MaxSessionUnprocessedPackets = 256
 
-// SkipPacketAveragePeriodLength is the average period length in which one packet number is skipped to prevent an Optimistic ACK attack
-const SkipPacketAveragePeriodLength PacketNumber = 500
+// SkipPacketInitialPeriod is the initial period length used for packet number skipping to prevent an Optimistic ACK attack.
+// Every time a packet number is skipped, the period is doubled, up to SkipPacketMaxPeriod.
+const SkipPacketInitialPeriod PacketNumber = 256
+
+// SkipPacketMaxPeriod is the maximum period length used for packet number skipping.
+const SkipPacketMaxPeriod PacketNumber = 128 * 1024
 
 // MaxAcceptQueueSize is the maximum number of sessions that the server queues for accepting.
 // If the queue is full, new connection attempts will be rejected.
@@ -95,6 +102,9 @@ const MinRemoteIdleTimeout = 5 * time.Second
 // DefaultIdleTimeout is the default idle timeout
 const DefaultIdleTimeout = 30 * time.Second
 
+// DefaultHandshakeIdleTimeout is the default idle timeout used before handshake completion.
+const DefaultHandshakeIdleTimeout = 5 * time.Second
+
 // DefaultHandshakeTimeout is the default timeout for a connection until the crypto handshake succeeds.
 const DefaultHandshakeTimeout = 10 * time.Second
 
@@ -122,10 +132,19 @@ const MaxPostHandshakeCryptoFrameSize = 1000
 // but must ensure that a maximum size ACK frame fits into one packet.
 const MaxAckFrameSize ByteCount = 1000
 
+// MaxDatagramFrameSize is the maximum size of a DATAGRAM frame as defined in
+// https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+// The size is chosen such that a DATAGRAM frame fits into a QUIC packet.
+const MaxDatagramFrameSize ByteCount = 1200
+
+// DatagramRcvQueueLen is the length of the receive queue for DATAGRAM frames.
+// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+const DatagramRcvQueueLen = 128
+
 // MaxNumAckRanges is the maximum number of ACK ranges that we send in an ACK frame.
 // It also serves as a limit for the packet history.
 // If at any point we keep track of more ranges, old ranges are discarded.
-const MaxNumAckRanges = 500
+const MaxNumAckRanges = 32
 
 // MinPacingDelay is the minimum duration that is used for packet pacing
 // If the packet packing frequency is higher, multiple packets might be sent at once.
@@ -173,4 +192,4 @@ const Max0RTTQueues = 32
 // When a new session is created, all buffered packets are passed to the session immediately.
 // To avoid blocking, this value has to be smaller than MaxSessionUnprocessedPackets.
 // To avoid packets being dropped as undecryptable by the session, this value has to be smaller than MaxUndecryptablePackets.
-const Max0RTTQueueLen = 32
+const Max0RTTQueueLen = 31

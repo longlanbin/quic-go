@@ -1,4 +1,5 @@
 // +build !go1.15
+// +build !go1.16
 
 package qtls
 
@@ -141,6 +142,25 @@ func Server(conn net.Conn, config *tls.Config, extraConfig *ExtraConfig) *Conn {
 
 func GetConnectionState(conn *Conn) ConnectionState {
 	return conn.ConnectionState()
+}
+
+// ToTLSConnectionState extracts the tls.ConnectionState
+// Warning: Calling ExportKeyingMaterial won't work.
+func ToTLSConnectionState(cs ConnectionState) tls.ConnectionState {
+	return tls.ConnectionState{
+		Version:                     cs.Version,
+		HandshakeComplete:           cs.HandshakeComplete,
+		DidResume:                   cs.DidResume,
+		CipherSuite:                 cs.CipherSuite,
+		NegotiatedProtocol:          cs.NegotiatedProtocol,
+		NegotiatedProtocolIsMutual:  cs.NegotiatedProtocolIsMutual,
+		ServerName:                  cs.ServerName,
+		PeerCertificates:            cs.PeerCertificates,
+		VerifiedChains:              cs.VerifiedChains,
+		SignedCertificateTimestamps: cs.SignedCertificateTimestamps,
+		OCSPResponse:                cs.OCSPResponse,
+		TLSUnique:                   cs.TLSUnique,
+	}
 }
 
 type cipherSuiteTLS13 struct {

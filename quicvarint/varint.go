@@ -1,4 +1,4 @@
-package utils
+package quicvarint
 
 import (
 	"bytes"
@@ -16,8 +16,8 @@ const (
 	maxVarInt8 = 4611686018427387903
 )
 
-// ReadVarInt reads a number in the QUIC varint format
-func ReadVarInt(b io.ByteReader) (uint64, error) {
+// Read reads a number in the QUIC varint format
+func Read(b io.ByteReader) (uint64, error) {
 	firstByte, err := b.ReadByte()
 	if err != nil {
 		return 0, err
@@ -65,8 +65,8 @@ func ReadVarInt(b io.ByteReader) (uint64, error) {
 	return uint64(b8) + uint64(b7)<<8 + uint64(b6)<<16 + uint64(b5)<<24 + uint64(b4)<<32 + uint64(b3)<<40 + uint64(b2)<<48 + uint64(b1)<<56, nil
 }
 
-// WriteVarInt writes a number in the QUIC varint format
-func WriteVarInt(b *bytes.Buffer, i uint64) {
+// Write writes a number in the QUIC varint format
+func Write(b *bytes.Buffer, i uint64) {
 	if i <= maxVarInt1 {
 		b.WriteByte(uint8(i))
 	} else if i <= maxVarInt2 {
@@ -83,8 +83,36 @@ func WriteVarInt(b *bytes.Buffer, i uint64) {
 	}
 }
 
-// VarIntLen determines the number of bytes that will be needed to write a number
-func VarIntLen(i uint64) protocol.ByteCount {
+// WriteWithLen writes a number in the QUIC varint format, with the desired length.
+func WriteWithLen(b *bytes.Buffer, i uint64, length protocol.ByteCount) {
+	if length != 1 && length != 2 && length != 4 && length != 8 {
+		panic("invalid varint length")
+	}
+	l := Len(i)
+	if l == length {
+		Write(b, i)
+		return
+	}
+	if l > length {
+		panic(fmt.Sprintf("cannot encode %d in %d bytes", i, length))
+	}
+	if length == 2 {
+		b.WriteByte(0b01000000)
+	} else if length == 4 {
+		b.WriteByte(0b10000000)
+	} else if length == 8 {
+		b.WriteByte(0b11000000)
+	}
+	for j := protocol.ByteCount(1); j < length-l; j++ {
+		b.WriteByte(0)
+	}
+	for j := protocol.ByteCount(0); j < l; j++ {
+		b.WriteByte(uint8(i >> (8 * (l - 1 - j))))
+	}
+}
+
+// Len determines the number of bytes that will be needed to write a number
+func Len(i uint64) protocol.ByteCount {
 	if i <= maxVarInt1 {
 		return 1
 	}

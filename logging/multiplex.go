@@ -84,6 +84,12 @@ func (m *connTracerMultiplexer) ReceivedTransportParameters(tp *TransportParamet
 	}
 }
 
+func (m *connTracerMultiplexer) RestoredTransportParameters(tp *TransportParameters) {
+	for _, t := range m.tracers {
+		t.RestoredTransportParameters(tp)
+	}
+}
+
 func (m *connTracerMultiplexer) SentPacket(hdr *ExtendedHeader, size ByteCount, ack *AckFrame, frames []Frame) {
 	for _, t := range m.tracers {
 		t.SentPacket(hdr, size, ack, frames)
@@ -183,6 +189,12 @@ func (m *connTracerMultiplexer) LossTimerExpired(typ TimerType, encLevel Encrypt
 func (m *connTracerMultiplexer) LossTimerCanceled() {
 	for _, t := range m.tracers {
 		t.LossTimerCanceled()
+	}
+}
+
+func (m *connTracerMultiplexer) Debug(name, msg string) {
+	for _, t := range m.tracers {
+		t.Debug(name, msg)
 	}
 }
 

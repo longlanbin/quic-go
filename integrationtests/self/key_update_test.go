@@ -16,8 +16,10 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var sentHeaders []*logging.ExtendedHeader
-var receivedHeaders []*logging.ExtendedHeader
+var (
+	sentHeaders     []*logging.ExtendedHeader
+	receivedHeaders []*logging.ExtendedHeader
+)
 
 func countKeyPhases() (sent, received int) {
 	lastKeyPhase := protocol.KeyPhaseOne
@@ -63,6 +65,7 @@ func (t *connTracer) StartedConnection(local, remote net.Addr, version logging.V
 func (t *connTracer) ClosedConnection(logging.CloseReason)                     {}
 func (t *connTracer) SentTransportParameters(*logging.TransportParameters)     {}
 func (t *connTracer) ReceivedTransportParameters(*logging.TransportParameters) {}
+func (t *connTracer) RestoredTransportParameters(*logging.TransportParameters) {}
 func (t *connTracer) SentPacket(hdr *logging.ExtendedHeader, size logging.ByteCount, ack *logging.AckFrame, frames []logging.Frame) {
 	sentHeaders = append(sentHeaders, hdr)
 }
@@ -75,6 +78,7 @@ func (t *connTracer) BufferedPacket(logging.PacketType)                         
 func (t *connTracer) DroppedPacket(logging.PacketType, logging.ByteCount, logging.PacketDropReason) {}
 func (t *connTracer) UpdatedMetrics(rttStats *logging.RTTStats, cwnd, bytesInFlight logging.ByteCount, packetsInFlight int) {
 }
+
 func (t *connTracer) LostPacket(logging.EncryptionLevel, logging.PacketNumber, logging.PacketLossReason) {
 }
 func (t *connTracer) UpdatedCongestionState(logging.CongestionState)                     {}
@@ -86,6 +90,7 @@ func (t *connTracer) DroppedKey(logging.KeyPhase)                               
 func (t *connTracer) SetLossTimer(logging.TimerType, logging.EncryptionLevel, time.Time) {}
 func (t *connTracer) LossTimerExpired(logging.TimerType, logging.EncryptionLevel)        {}
 func (t *connTracer) LossTimerCanceled()                                                 {}
+func (t *connTracer) Debug(string, string)                                               {}
 func (t *connTracer) Close()                                                             {}
 
 var _ = Describe("Key Update tests", func() {
@@ -130,6 +135,6 @@ var _ = Describe("Key Update tests", func() {
 		keyPhasesSent, keyPhasesReceived := countKeyPhases()
 		fmt.Fprintf(GinkgoWriter, "Used %d key phases on outgoing and %d key phases on incoming packets.\n", keyPhasesSent, keyPhasesReceived)
 		Expect(keyPhasesReceived).To(BeNumerically(">", 10))
-		Expect(keyPhasesReceived).To(BeNumerically("~", keyPhasesSent, 1))
+		Expect(keyPhasesReceived).To(BeNumerically("~", keyPhasesSent, 2))
 	})
 })

@@ -1,10 +1,12 @@
 // +build go1.15
+// +build !go1.16
 
 package qtls
 
 import (
 	"crypto"
 	"crypto/cipher"
+	"crypto/tls"
 	"net"
 	"unsafe"
 
@@ -83,6 +85,11 @@ func Server(conn net.Conn, config *Config, extraConfig *ExtraConfig) *Conn {
 
 func GetConnectionState(conn *Conn) ConnectionState {
 	return conn.ConnectionStateWith0RTT()
+}
+
+// ToTLSConnectionState extracts the tls.ConnectionState
+func ToTLSConnectionState(cs ConnectionState) tls.ConnectionState {
+	return cs.ConnectionState
 }
 
 type cipherSuiteTLS13 struct {

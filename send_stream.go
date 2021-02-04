@@ -57,8 +57,10 @@ type sendStream struct {
 	version protocol.VersionNumber
 }
 
-var _ SendStream = &sendStream{}
-var _ sendStreamI = &sendStream{}
+var (
+	_ SendStream  = &sendStream{}
+	_ sendStreamI = &sendStream{}
+)
 
 func newSendStream(
 	streamID protocol.StreamID,
@@ -344,6 +346,10 @@ func (s *sendStream) frameAcked(f wire.Frame) {
 	f.(*wire.StreamFrame).PutBack()
 
 	s.mutex.Lock()
+	if s.canceledWrite {
+		s.mutex.Unlock()
+		return
+	}
 	s.numOutstandingFrames--
 	if s.numOutstandingFrames < 0 {
 		panic("numOutStandingFrames negative")
@@ -369,6 +375,10 @@ func (s *sendStream) queueRetransmission(f wire.Frame) {
 	sf := f.(*wire.StreamFrame)
 	sf.DataLenPresent = true
 	s.mutex.Lock()
+	if s.canceledWrite {
+		s.mutex.Unlock()
+		return
+	}
 	s.retransmissionQueue = append(s.retransmissionQueue, sf)
 	s.numOutstandingFrames--
 	if s.numOutstandingFrames < 0 {
@@ -411,6 +421,8 @@ func (s *sendStream) cancelWriteImpl(errorCode protocol.ApplicationErrorCode, wr
 	s.ctxCancel()
 	s.canceledWrite = true
 	s.cancelWriteErr = writeErr
+	s.numOutstandingFrames = 0
+	s.retransmissionQueue = nil
 	newlyCompleted := s.isNewlyCompleted()
 	s.mutex.Unlock()
 

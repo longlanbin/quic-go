@@ -5,7 +5,6 @@ import (
 
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/wire"
-	"github.com/lucas-clemente/quic-go/quictrace"
 )
 
 // A Packet is a packet
@@ -34,7 +33,6 @@ type SentPacketHandler interface {
 
 	// The SendMode determines if and what kind of packets can be sent.
 	SendMode() SendMode
-	AmplificationWindow() protocol.ByteCount
 	// TimeUntilSend is the time when the next packet should be sent.
 	// It is used for pacing packets.
 	TimeUntilSend() time.Time
@@ -49,9 +47,6 @@ type SentPacketHandler interface {
 
 	GetLossDetectionTimeout() time.Time
 	OnLossDetectionTimeout() error
-
-	// report some congestion statistics. For tracing only.
-	GetStats() *quictrace.TransportState
 }
 
 type sentPacketTracker interface {

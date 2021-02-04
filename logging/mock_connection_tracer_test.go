@@ -74,6 +74,18 @@ func (mr *MockConnectionTracerMockRecorder) ClosedConnection(arg0 interface{}) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClosedConnection", reflect.TypeOf((*MockConnectionTracer)(nil).ClosedConnection), arg0)
 }
 
+// Debug mocks base method
+func (m *MockConnectionTracer) Debug(arg0, arg1 string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Debug", arg0, arg1)
+}
+
+// Debug indicates an expected call of Debug
+func (mr *MockConnectionTracerMockRecorder) Debug(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Debug", reflect.TypeOf((*MockConnectionTracer)(nil).Debug), arg0, arg1)
+}
+
 // DroppedEncryptionLevel mocks base method
 func (m *MockConnectionTracer) DroppedEncryptionLevel(arg0 protocol.EncryptionLevel) {
 	m.ctrl.T.Helper()
@@ -192,6 +204,18 @@ func (m *MockConnectionTracer) ReceivedVersionNegotiationPacket(arg0 *wire.Heade
 func (mr *MockConnectionTracerMockRecorder) ReceivedVersionNegotiationPacket(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReceivedVersionNegotiationPacket", reflect.TypeOf((*MockConnectionTracer)(nil).ReceivedVersionNegotiationPacket), arg0, arg1)
+}
+
+// RestoredTransportParameters mocks base method
+func (m *MockConnectionTracer) RestoredTransportParameters(arg0 *wire.TransportParameters) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RestoredTransportParameters", arg0)
+}
+
+// RestoredTransportParameters indicates an expected call of RestoredTransportParameters
+func (mr *MockConnectionTracerMockRecorder) RestoredTransportParameters(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RestoredTransportParameters", reflect.TypeOf((*MockConnectionTracer)(nil).RestoredTransportParameters), arg0)
 }
 
 // SentPacket mocks base method

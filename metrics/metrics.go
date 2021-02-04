@@ -165,6 +165,7 @@ func (t *connTracer) ClosedConnection(r logging.CloseReason) {
 }
 func (t *connTracer) SentTransportParameters(*logging.TransportParameters)     {}
 func (t *connTracer) ReceivedTransportParameters(*logging.TransportParameters) {}
+func (t *connTracer) RestoredTransportParameters(*logging.TransportParameters) {}
 func (t *connTracer) SentPacket(hdr *logging.ExtendedHeader, _ logging.ByteCount, _ *logging.AckFrame, _ []logging.Frame) {
 	typ := logging.PacketTypeFromHeader(&hdr.Header)
 	if typ == logging.PacketType1RTT {
@@ -196,6 +197,7 @@ func (t *connTracer) LostPacket(encLevel logging.EncryptionLevel, _ logging.Pack
 		lostPackets.M(1),
 	)
 }
+
 func (t *connTracer) UpdatedPTOCount(value uint32) {
 	if value == 0 {
 		return
@@ -217,4 +219,5 @@ func (t *connTracer) DroppedKey(logging.KeyPhase)                               
 func (t *connTracer) SetLossTimer(logging.TimerType, logging.EncryptionLevel, time.Time) {}
 func (t *connTracer) LossTimerExpired(logging.TimerType, logging.EncryptionLevel)        {}
 func (t *connTracer) LossTimerCanceled()                                                 {}
+func (t *connTracer) Debug(string, string)                                               {}
 func (t *connTracer) Close()                                                             {}

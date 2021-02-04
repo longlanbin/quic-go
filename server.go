@@ -103,8 +103,10 @@ type baseServer struct {
 	logger utils.Logger
 }
 
-var _ Listener = &baseServer{}
-var _ unknownPacketHandler = &baseServer{}
+var (
+	_ Listener             = &baseServer{}
+	_ unknownPacketHandler = &baseServer{}
+)
 
 type earlyServer struct{ *baseServer }
 
@@ -225,7 +227,7 @@ func (s *baseServer) run() {
 		case <-s.errorChan:
 			return
 		case p := <-s.receivedPackets:
-			if shouldReleaseBuffer := s.handlePacketImpl(p); !shouldReleaseBuffer {
+			if bufferStillInUse := s.handlePacketImpl(p); !bufferStillInUse {
 				p.buffer.Release()
 			}
 		}
@@ -273,24 +275,26 @@ func (s *baseServer) accept(ctx context.Context) (quicSession, error) {
 // Close the server
 func (s *baseServer) Close() error {
 	s.mutex.Lock()
-	defer s.mutex.Unlock()
 	if s.closed {
+		s.mutex.Unlock()
 		return nil
 	}
-	s.sessionHandler.CloseServer()
 	if s.serverError == nil {
 		s.serverError = errors.New("server closed")
 	}
-	var err error
 	// If the server was started with ListenAddr, we created the packet conn.
 	// We need to close it in order to make the go routine reading from that conn return.
-	if s.createdPacketConn {
-		err = s.sessionHandler.Destroy()
-	}
+	createdPacketConn := s.createdPacketConn
 	s.closed = true
 	close(s.errorChan)
+	s.mutex.Unlock()
+
 	<-s.running
-	return err
+	s.sessionHandler.CloseServer()
+	if createdPacketConn {
+		return s.sessionHandler.Destroy()
+	}
+	return nil
 }
 
 func (s *baseServer) setCloseError(e error) {
@@ -320,7 +324,14 @@ func (s *baseServer) handlePacket(p *receivedPacket) {
 	}
 }
 
-func (s *baseServer) handlePacketImpl(p *receivedPacket) bool /* should the buffer be released */ {
+func (s *baseServer) handlePacketImpl(p *receivedPacket) bool /* is the buffer still in use? */ {
+	if wire.IsVersionNegotiationPacket(p.data) {
+		s.logger.Debugf("Dropping Version Negotiation packet.")
+		if s.config.Tracer != nil {
+			s.config.Tracer.DroppedPacket(p.remoteAddr, logging.PacketTypeVersionNegotiation, p.Size(), logging.PacketDropUnexpectedPacket)
+		}
+		return false
+	}
 	// If we're creating a new session, the packet will be passed to the session.
 	// The header will then be parsed again.
 	hdr, _, _, err := wire.ParsePacket(p.data, s.config.ConnectionIDLength)
@@ -344,6 +355,13 @@ func (s *baseServer) handlePacketImpl(p *receivedPacket) bool /* should the buff
 	}
 	// send a Version Negotiation Packet if the client is speaking a different protocol version
 	if !protocol.IsSupportedVersion(s.config.Versions, hdr.Version) {
+		if p.Size() < protocol.MinUnknownVersionPacketSize {
+			s.logger.Debugf("Dropping a packet with an unknown version that is too small (%d bytes)", p.Size())
+			if s.config.Tracer != nil {
+				s.config.Tracer.DroppedPacket(p.remoteAddr, logging.PacketTypeNotDetermined, p.Size(), logging.PacketDropUnexpectedPacket)
+			}
+			return false
+		}
 		go s.sendVersionNegotiationPacket(p, hdr)
 		return false
 	}
@@ -420,6 +438,7 @@ func (s *baseServer) handleInitialImpl(p *receivedPacket, hdr *wire.Header) erro
 	if queueLen := atomic.LoadInt32(&s.sessionQueueLen); queueLen >= protocol.MaxAcceptQueueSize {
 		s.logger.Debugf("Rejecting new connection. Server currently busy. Accept queue length: %d (max %d)", queueLen, protocol.MaxAcceptQueueSize)
 		go func() {
+			defer p.buffer.Release()
 			if err := s.sendConnectionRefused(p.remoteAddr, hdr); err != nil {
 				s.logger.Debugf("Error rejecting connection: %s", err)
 			}
@@ -446,13 +465,7 @@ func (s *baseServer) handleInitialImpl(p *receivedPacket, hdr *wire.Header) erro
 		return nil
 	}
 	sess.handlePacket(p)
-	for {
-		p := s.zeroRTTQueue.Dequeue(hdr.DestConnectionID)
-		if p == nil {
-			break
-		}
-		sess.handlePacket(p)
-	}
+	s.zeroRTTQueue.DequeueToSession(hdr.DestConnectionID, sess)
 	return nil
 }
 
@@ -549,10 +562,15 @@ func (s *baseServer) sendRetry(remoteAddr net.Addr, hdr *wire.Header) error {
 	replyHdr.SrcConnectionID = srcConnID
 	replyHdr.DestConnectionID = hdr.SrcConnectionID
 	replyHdr.Token = token
-	s.logger.Debugf("Changing connection ID to %s.", srcConnID)
-	s.logger.Debugf("-> Sending Retry")
-	replyHdr.Log(s.logger)
-	buf := &bytes.Buffer{}
+	if s.logger.Debug() {
+		s.logger.Debugf("Changing connection ID to %s.", srcConnID)
+		s.logger.Debugf("-> Sending Retry")
+		replyHdr.Log(s.logger)
+	}
+
+	packetBuffer := getPacketBuffer()
+	defer packetBuffer.Release()
+	buf := bytes.NewBuffer(packetBuffer.Data)
 	if err := replyHdr.Write(buf, hdr.Version); err != nil {
 		return err
 	}

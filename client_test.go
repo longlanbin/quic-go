@@ -1,7 +1,6 @@
 package quic
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -12,9 +11,7 @@ import (
 	mocklogging "github.com/lucas-clemente/quic-go/internal/mocks/logging"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/utils"
-	"github.com/lucas-clemente/quic-go/internal/wire"
 	"github.com/lucas-clemente/quic-go/logging"
-	"github.com/lucas-clemente/quic-go/quictrace"
 
 	"github.com/golang/mock/gomock"
 
@@ -25,7 +22,7 @@ import (
 var _ = Describe("Client", func() {
 	var (
 		cl              *client
-		packetConn      *mockPacketConn
+		packetConn      *MockPacketConn
 		addr            net.Addr
 		connID          protocol.ConnectionID
 		mockMultiplexer *MockMultiplexer
@@ -42,7 +39,6 @@ var _ = Describe("Client", func() {
 			conf *Config,
 			tlsConf *tls.Config,
 			initialPacketNumber protocol.PacketNumber,
-			initialVersion protocol.VersionNumber,
 			enable0RTT bool,
 			hasNegotiatedVersion bool,
 			tracer logging.ConnectionTracer,
@@ -51,17 +47,6 @@ var _ = Describe("Client", func() {
 		) quicSession
 	)
 
-	// generate a packet sent by the server that accepts the QUIC version suggested by the client
-	acceptClientVersionPacket := func(connID protocol.ConnectionID) []byte {
-		b := &bytes.Buffer{}
-		Expect((&wire.ExtendedHeader{
-			Header:          wire.Header{DestConnectionID: connID},
-			PacketNumber:    1,
-			PacketNumberLen: 1,
-		}).Write(b, protocol.VersionWhatever)).To(Succeed())
-		return b.Bytes()
-	}
-
 	BeforeEach(func() {
 		tlsConf = &tls.Config{NextProtos: []string{"proto1"}}
 		connID = protocol.ConnectionID{0, 0, 0, 0, 0, 0, 0x13, 0x37}
@@ -69,17 +54,16 @@ var _ = Describe("Client", func() {
 		tracer = mocklogging.NewMockConnectionTracer(mockCtrl)
 		tr := mocklogging.NewMockTracer(mockCtrl)
 		tr.EXPECT().TracerForConnection(protocol.PerspectiveClient, gomock.Any()).Return(tracer).MaxTimes(1)
-		config = &Config{Tracer: tr}
+		config = &Config{Tracer: tr, Versions: []protocol.VersionNumber{protocol.VersionTLS}}
 		Eventually(areSessionsRunning).Should(BeFalse())
 		// sess = NewMockQuicSession(mockCtrl)
 		addr = &net.UDPAddr{IP: net.IPv4(192, 168, 100, 200), Port: 1337}
-		packetConn = newMockPacketConn()
-		packetConn.addr = &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 1234}
-		packetConn.dataReadFrom = addr
+		packetConn = NewMockPacketConn(mockCtrl)
+		packetConn.EXPECT().LocalAddr().Return(&net.UDPAddr{}).AnyTimes()
 		cl = &client{
 			srcConnID:  connID,
 			destConnID: connID,
-			version:    protocol.SupportedVersions[0],
+			version:    protocol.VersionTLS,
 			conn:       newSendConn(packetConn, addr),
 			tracer:     tracer,
 			logger:     utils.DefaultLogger,
@@ -142,7 +126,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -155,7 +138,7 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().HandshakeComplete().Return(context.Background())
 				return sess
 			}
-			_, err := DialAddr("localhost:17890", tlsConf, &Config{HandshakeTimeout: time.Millisecond})
+			_, err := DialAddr("localhost:17890", tlsConf, &Config{HandshakeIdleTimeout: time.Millisecond})
 			Expect(err).ToNot(HaveOccurred())
 			Eventually(remoteAddrChan).Should(Receive(Equal("127.0.0.1:17890")))
 		})
@@ -175,7 +158,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				tlsConf *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -208,7 +190,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				tlsConf *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -221,7 +202,7 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().run()
 				return sess
 			}
-			tracer.EXPECT().StartedConnection(packetConn.addr, addr, protocol.VersionTLS, gomock.Any(), gomock.Any())
+			tracer.EXPECT().StartedConnection(packetConn.LocalAddr(), addr, protocol.VersionTLS, gomock.Any(), gomock.Any())
 			_, err := Dial(
 				packetConn,
 				addr,
@@ -247,7 +228,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				enable0RTT bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -290,7 +270,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				enable0RTT bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -338,7 +317,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -350,7 +328,6 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().HandshakeComplete().Return(context.Background())
 				return sess
 			}
-			packetConn.dataToRead <- acceptClientVersionPacket(cl.srcConnID)
 			tracer.EXPECT().StartedConnection(gomock.Any(), gomock.Any(), protocol.VersionTLS, gomock.Any(), gomock.Any())
 			_, err := Dial(
 				packetConn,
@@ -382,7 +359,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -434,7 +410,6 @@ var _ = Describe("Client", func() {
 				_ *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber,
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -472,27 +447,26 @@ var _ = Describe("Client", func() {
 
 		Context("quic.Config", func() {
 			It("setups with the right values", func() {
-				tracer := quictrace.NewTracer()
 				tokenStore := NewLRUTokenStore(10, 4)
 				config := &Config{
-					HandshakeTimeout:      1337 * time.Minute,
+					HandshakeIdleTimeout:  1337 * time.Minute,
 					MaxIdleTimeout:        42 * time.Hour,
 					MaxIncomingStreams:    1234,
 					MaxIncomingUniStreams: 4321,
 					ConnectionIDLength:    13,
 					StatelessResetKey:     []byte("foobar"),
-					QuicTracer:            tracer,
 					TokenStore:            tokenStore,
+					EnableDatagrams:       true,
 				}
 				c := populateClientConfig(config, false)
-				Expect(c.HandshakeTimeout).To(Equal(1337 * time.Minute))
+				Expect(c.HandshakeIdleTimeout).To(Equal(1337 * time.Minute))
 				Expect(c.MaxIdleTimeout).To(Equal(42 * time.Hour))
 				Expect(c.MaxIncomingStreams).To(BeEquivalentTo(1234))
 				Expect(c.MaxIncomingUniStreams).To(BeEquivalentTo(4321))
 				Expect(c.ConnectionIDLength).To(Equal(13))
 				Expect(c.StatelessResetKey).To(Equal([]byte("foobar")))
-				Expect(c.QuicTracer).To(Equal(tracer))
 				Expect(c.TokenStore).To(Equal(tokenStore))
+				Expect(c.EnableDatagrams).To(BeTrue())
 			})
 
 			It("errors when the Config contains an invalid version", func() {
@@ -532,7 +506,7 @@ var _ = Describe("Client", func() {
 			It("fills in default values if options are not set in the Config", func() {
 				c := populateClientConfig(&Config{}, false)
 				Expect(c.Versions).To(Equal(protocol.SupportedVersions))
-				Expect(c.HandshakeTimeout).To(Equal(protocol.DefaultHandshakeTimeout))
+				Expect(c.HandshakeIdleTimeout).To(Equal(protocol.DefaultHandshakeIdleTimeout))
 				Expect(c.MaxIdleTimeout).To(Equal(protocol.DefaultIdleTimeout))
 			})
 		})
@@ -555,7 +529,6 @@ var _ = Describe("Client", func() {
 				configP *Config,
 				_ *tls.Config,
 				_ protocol.PacketNumber,
-				_ protocol.VersionNumber, /* initial version */
 				_ bool,
 				_ bool,
 				_ logging.ConnectionTracer,
@@ -597,7 +570,6 @@ var _ = Describe("Client", func() {
 				configP *Config,
 				_ *tls.Config,
 				pn protocol.PacketNumber,
-				version protocol.VersionNumber,
 				_ bool,
 				hasNegotiatedVersion bool,
 				_ logging.ConnectionTracer,
@@ -608,7 +580,6 @@ var _ = Describe("Client", func() {
 				sess.EXPECT().HandshakeComplete().Return(context.Background())
 				if counter == 0 {
 					Expect(pn).To(BeZero())
-					Expect(version).To(Equal(initialVersion))
 					Expect(hasNegotiatedVersion).To(BeFalse())
 					sess.EXPECT().run().Return(&errCloseForRecreating{
 						nextPacketNumber: 109,
@@ -616,8 +587,6 @@ var _ = Describe("Client", func() {
 					})
 				} else {
 					Expect(pn).To(Equal(protocol.PacketNumber(109)))
-					Expect(version).ToNot(Equal(initialVersion))
-					Expect(version).To(Equal(protocol.VersionNumber(789)))
 					Expect(hasNegotiatedVersion).To(BeTrue())
 					sess.EXPECT().run()
 				}

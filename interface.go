@@ -6,11 +6,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/lucas-clemente/quic-go/logging"
-
 	"github.com/lucas-clemente/quic-go/internal/handshake"
 	"github.com/lucas-clemente/quic-go/internal/protocol"
-	"github.com/lucas-clemente/quic-go/quictrace"
+	"github.com/lucas-clemente/quic-go/logging"
 )
 
 // RetireBugBackwardsCompatibilityMode controls a backwards compatibility mode, necessary due to a bug in
@@ -28,6 +26,13 @@ type StreamID = protocol.StreamID
 
 // A VersionNumber is a QUIC version number.
 type VersionNumber = protocol.VersionNumber
+
+const (
+	// VersionDraft29 is IETF QUIC draft-29
+	VersionDraft29 = protocol.VersionDraft29
+	// VersionDraft32 is IETF QUIC draft-32
+	VersionDraft32 = protocol.VersionDraft32
+)
 
 // A Token can be used to verify the ownership of the client address.
 type Token struct {
@@ -136,8 +141,6 @@ type StreamError interface {
 	ErrorCode() ErrorCode
 }
 
-type ConnectionState = handshake.ConnectionState
-
 // A Session is a QUIC connection between two peers.
 type Session interface {
 	// AcceptStream returns the next stream opened by the peer, blocking until one is available.
@@ -184,6 +187,13 @@ type Session interface {
 	// It blocks until the handshake completes.
 	// Warning: This API should not be considered stable and might change soon.
 	ConnectionState() ConnectionState
+
+	// SendMessage sends a message as a datagram.
+	// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+	SendMessage([]byte) error
+	// ReceiveMessage gets a message received in a datagram.
+	// See https://datatracker.ietf.org/doc/draft-pauly-quic-datagram/.
+	ReceiveMessage() ([]byte, error)
 }
 
 // An EarlySession is a session that is handshaking.
@@ -212,10 +222,10 @@ type Config struct {
 	// If used for a server, or dialing on a packet conn, a 4 byte connection ID will be used.
 	// When dialing on a packet conn, the ConnectionIDLength value must be the same for every Dial call.
 	ConnectionIDLength int
-	// HandshakeTimeout is the maximum duration that the cryptographic handshake may take.
-	// If the timeout is exceeded, the connection is closed.
-	// If this value is zero, the timeout is set to 10 seconds.
-	HandshakeTimeout time.Duration
+	// HandshakeIdleTimeout is the idle timeout before completion of the handshake.
+	// Specifically, if we don't receive any packet from the peer within this time, the connection attempt is aborted.
+	// If this value is zero, the timeout is set to 5 seconds.
+	HandshakeIdleTimeout time.Duration
 	// MaxIdleTimeout is the maximum duration that may pass without any incoming network activity.
 	// The actual value for the idle timeout is the minimum of this value and the peer's.
 	// This value only applies after the handshake has completed.
@@ -256,10 +266,16 @@ type Config struct {
 	StatelessResetKey []byte
 	// KeepAlive defines whether this peer will periodically send a packet to keep the connection alive.
 	KeepAlive bool
-	// QUIC Event Tracer.
-	// Warning: Experimental. This API should not be considered stable and will change soon.
-	QuicTracer quictrace.Tracer
-	Tracer     logging.Tracer
+	// See https://datatracker.ietf.org/doc/draft-ietf-quic-datagram/.
+	// Datagrams will only be available when both peers enable datagram support.
+	EnableDatagrams bool
+	Tracer          logging.Tracer
+}
+
+// ConnectionState records basic details about a QUIC connection
+type ConnectionState struct {
+	TLS               handshake.ConnectionState
+	SupportsDatagrams bool
 }
 
 // A Listener for incoming QUIC connections

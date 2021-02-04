@@ -20,10 +20,12 @@ linters:
     - asciicheck
     - deadcode
     - depguard
+    - exhaustive
     - exportloopref
     - goconst
     - goimports
-    - gofmt
+    - gofmt # redundant, since gofmt *should* be a no-op after gofumpt
+    - gofumpt
     - gosimple
     - ineffassign
     - misspell

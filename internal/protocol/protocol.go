@@ -44,10 +44,13 @@ const (
 )
 
 // A ByteCount in QUIC
-type ByteCount uint64
+type ByteCount int64
 
 // MaxByteCount is the maximum value of a ByteCount
 const MaxByteCount = ByteCount(1<<62 - 1)
+
+// InvalidByteCount is an invalid byte count
+const InvalidByteCount ByteCount = -1
 
 // An ApplicationErrorCode is an application-defined error code.
 type ApplicationErrorCode uint64
@@ -63,6 +66,10 @@ const MaxReceivePacketSize ByteCount = 1452
 
 // MinInitialPacketSize is the minimum size an Initial packet is required to have.
 const MinInitialPacketSize = 1200
+
+// MinUnknownVersionPacketSize is the minimum size a packet with an unknown version
+// needs to have in order to trigger a Version Negotiation packet.
+const MinUnknownVersionPacketSize = MinInitialPacketSize
 
 // MinStatelessResetSize is the minimum size of a stateless reset packet that we send
 const MinStatelessResetSize = 1 /* first byte */ + 20 /* max. conn ID length */ + 4 /* max. packet number length */ + 1 /* min. payload length */ + 16 /* token */
@@ -87,7 +94,7 @@ const MaxConnIDLen = 20
 
 // InvalidPacketLimitAES is the maximum number of packets that we can fail to decrypt when using
 // AEAD_AES_128_GCM or AEAD_AES_265_GCM.
-const InvalidPacketLimitAES = 1 << 54
+const InvalidPacketLimitAES = 1 << 52
 
 // InvalidPacketLimitChaCha is the maximum number of packets that we can fail to decrypt when using AEAD_CHACHA20_POLY1305.
 const InvalidPacketLimitChaCha = 1 << 36

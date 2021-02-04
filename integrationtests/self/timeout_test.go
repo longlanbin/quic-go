@@ -8,9 +8,7 @@ import (
 	"io/ioutil"
 	mrand "math/rand"
 	"net"
-	"os"
 	"runtime/pprof"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -66,7 +64,7 @@ var _ = Describe("Timeout tests", func() {
 			_, err := quic.DialAddr(
 				"localhost:12345",
 				getTLSClientConfig(),
-				getQuicConfig(&quic.Config{HandshakeTimeout: 10 * time.Millisecond}),
+				getQuicConfig(&quic.Config{HandshakeIdleTimeout: 10 * time.Millisecond}),
 			)
 			errChan <- err
 		}()
@@ -81,6 +79,25 @@ var _ = Describe("Timeout tests", func() {
 		errChan := make(chan error)
 		go func() {
 			_, err := quic.DialAddrContext(
+				ctx,
+				"localhost:12345",
+				getTLSClientConfig(),
+				getQuicConfig(nil),
+			)
+			errChan <- err
+		}()
+		var err error
+		Eventually(errChan).Should(Receive(&err))
+		// This is not a net.Error timeout error
+		Expect(err).To(MatchError(context.DeadlineExceeded))
+	})
+
+	It("returns the context error when the context expires with 0RTT enabled", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		errChan := make(chan error)
+		go func() {
+			_, err := quic.DialAddrEarlyContext(
 				ctx,
 				"localhost:12345",
 				getTLSClientConfig(),
@@ -161,15 +178,6 @@ var _ = Describe("Timeout tests", func() {
 
 	Context("timing out at the right time", func() {
 		var idleTimeout time.Duration
-
-		scaleDuration := func(d time.Duration) time.Duration {
-			scaleFactor := 1
-			if f, err := strconv.Atoi(os.Getenv("TIMESCALE_FACTOR")); err == nil { // parsing "" errors, so this works fine if the env is not set
-				scaleFactor = f
-			}
-			Expect(scaleFactor).ToNot(BeZero())
-			return time.Duration(scaleFactor) * d
-		}
 
 		BeforeEach(func() {
 			idleTimeout = scaleDuration(100 * time.Millisecond)
@@ -412,8 +420,8 @@ var _ = Describe("Timeout tests", func() {
 					fmt.Sprintf("localhost:%d", ln.Addr().(*net.UDPAddr).Port),
 					getTLSClientConfig(),
 					getQuicConfig(&quic.Config{
-						HandshakeTimeout: handshakeTimeout,
-						MaxIdleTimeout:   handshakeTimeout,
+						HandshakeIdleTimeout: handshakeTimeout,
+						MaxIdleTimeout:       handshakeTimeout,
 					}),
 				)
 				if err != nil {
@@ -445,9 +453,9 @@ var _ = Describe("Timeout tests", func() {
 				"localhost:0",
 				getTLSConfig(),
 				getQuicConfig(&quic.Config{
-					HandshakeTimeout: handshakeTimeout,
-					MaxIdleTimeout:   handshakeTimeout,
-					KeepAlive:        true,
+					HandshakeIdleTimeout: handshakeTimeout,
+					MaxIdleTimeout:       handshakeTimeout,
+					KeepAlive:            true,
 				}),
 			)
 			Expect(err).ToNot(HaveOccurred())

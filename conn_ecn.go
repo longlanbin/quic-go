@@ -1,17 +1,42 @@
-// +build !windows
+// +build darwin linux
 
 package quic
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/lucas-clemente/quic-go/internal/protocol"
 	"github.com/lucas-clemente/quic-go/internal/utils"
 )
 
 const ecnMask uint8 = 0x3
+
+func inspectReadBuffer(c net.PacketConn) (int, error) {
+	conn, ok := c.(interface {
+		SyscallConn() (syscall.RawConn, error)
+	})
+	if !ok {
+		return 0, errors.New("doesn't have a SyscallConn")
+	}
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return 0, fmt.Errorf("couldn't get syscall.RawConn: %w", err)
+	}
+	var size int
+	var serr error
+	if err := rawConn.Control(func(fd uintptr) {
+		size, serr = unix.GetsockoptInt(int(fd), unix.SOL_SOCKET, unix.SO_RCVBUF)
+	}); err != nil {
+		return 0, err
+	}
+	return size, serr
+}
 
 type ecnConn struct {
 	ECNCapablePacketConn
@@ -30,12 +55,12 @@ func newConn(c ECNCapablePacketConn) (*ecnConn, error) {
 	// We expect at least one of those syscalls to succeed.
 	var errIPv4, errIPv6 error
 	if err := rawConn.Control(func(fd uintptr) {
-		errIPv4 = setRECVTOS(fd)
+		errIPv4 = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_RECVTOS, 1)
 	}); err != nil {
 		return nil, err
 	}
 	if err := rawConn.Control(func(fd uintptr) {
-		errIPv6 = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_RECVTCLASS, 1)
+		errIPv6 = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVTCLASS, 1)
 	}); err != nil {
 		return nil, err
 	}
@@ -65,17 +90,17 @@ func (c *ecnConn) ReadPacket() (*receivedPacket, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctrlMsgs, err := syscall.ParseSocketControlMessage(c.oobBuffer[:oobn])
+	ctrlMsgs, err := unix.ParseSocketControlMessage(c.oobBuffer[:oobn])
 	if err != nil {
 		return nil, err
 	}
 	var ecn protocol.ECN
 	for _, ctrlMsg := range ctrlMsgs {
-		if ctrlMsg.Header.Level == syscall.IPPROTO_IP && ctrlMsg.Header.Type == msgTypeIPTOS {
+		if ctrlMsg.Header.Level == unix.IPPROTO_IP && ctrlMsg.Header.Type == msgTypeIPTOS {
 			ecn = protocol.ECN(ctrlMsg.Data[0] & ecnMask)
 			break
 		}
-		if ctrlMsg.Header.Level == syscall.IPPROTO_IPV6 && ctrlMsg.Header.Type == syscall.IPV6_TCLASS {
+		if ctrlMsg.Header.Level == unix.IPPROTO_IPV6 && ctrlMsg.Header.Type == unix.IPV6_TCLASS {
 			ecn = protocol.ECN(ctrlMsg.Data[0] & ecnMask)
 			break
 		}
